@@ -113,16 +113,25 @@ export async function detectProject(params: DetectProjectParams): Promise<Detect
     // Check for lock files to determine package manager
     if (existsSync(join(projectPath, 'pnpm-lock.yaml'))) {
       info.packageManager = 'pnpm';
-      info.buildSystem = 'pnpm';
+      // Only set buildSystem if not already set (Maven/Gradle take priority)
+      if (!info.buildSystem) {
+        info.buildSystem = 'pnpm';
+      }
     } else if (existsSync(join(projectPath, 'yarn.lock'))) {
       info.packageManager = 'yarn';
-      info.buildSystem = 'yarn';
+      if (!info.buildSystem) {
+        info.buildSystem = 'yarn';
+      }
     } else if (existsSync(join(projectPath, 'package-lock.json'))) {
       info.packageManager = 'npm';
-      info.buildSystem = 'npm';
+      if (!info.buildSystem) {
+        info.buildSystem = 'npm';
+      }
     } else {
       info.packageManager = 'npm';
-      info.buildSystem = 'npm';
+      if (!info.buildSystem) {
+        info.buildSystem = 'npm';
+      }
     }
 
     // Detect test framework from package.json
