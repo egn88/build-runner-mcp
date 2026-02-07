@@ -316,17 +316,34 @@ export function parseMavenTestOutput(output: string): TestResult {
     result.summary.duration = totalTimeMatch[1].trim();
   }
 
-  // Parse individual test failures
-  // Format: [ERROR] testMethod(com.package.TestClass)  Time elapsed: 0.005 s  <<< FAILURE!
-  // Followed by stack trace lines
+  // Parse individual test failures using multiple patterns
   const lines = output.split('\n');
   let i = 0;
 
   while (i < lines.length) {
     const line = lines[i];
 
-    // Match failure/error pattern: testMethod(com.package.TestClass)  <<< FAILURE! or <<< ERROR!
-    const failureMatch = line.match(/\[ERROR\]\s+(\w+)\(([^)]+)\)\s+.*<<<\s*(FAILURE|ERROR)!/);
+    // Pattern 1: Old format - testMethod(com.package.TestClass)  <<< FAILURE! or <<< ERROR!
+    let failureMatch = line.match(/\[ERROR\]\s+(\w+)\(([^)]+)\)\s+.*<<<\s*(FAILURE|ERROR)!/);
+
+    // Pattern 2: Newer Surefire format - TestClass.testMethod:lineNum <<< FAILURE!
+    // Example: [ERROR]   UserServiceTest.testCreateUser:42 expected: <true> but was: <false> <<< FAILURE!
+    if (!failureMatch) {
+      const newFormatMatch = line.match(/\[ERROR\]\s+(?:[\w.]+\.)?(\w+)\.(\w+)(?::\d+)?.*<<<\s*(FAILURE|ERROR)!/);
+      if (newFormatMatch) {
+        // In new format, group 1 is class name (short), group 2 is method
+        failureMatch = [line, newFormatMatch[2], newFormatMatch[1], newFormatMatch[3]];
+      }
+    }
+
+    // Pattern 3: Parameterized test format - testMethod[params](TestClass) <<< FAILURE!
+    if (!failureMatch) {
+      const paramMatch = line.match(/\[ERROR\]\s+(\w+)\[[^\]]*\]\(([^)]+)\)\s+.*<<<\s*(FAILURE|ERROR)!/);
+      if (paramMatch) {
+        failureMatch = [line, paramMatch[1], paramMatch[2], paramMatch[3]];
+      }
+    }
+
     if (failureMatch) {
       const testMethod = failureMatch[1];
       const testClass = failureMatch[2];
@@ -346,12 +363,20 @@ export function parseMavenTestOutput(output: string): TestResult {
       // Capture exception message and stack trace
       while (i < lines.length) {
         const stackLine = lines[i];
-        // Stop at next test or empty sections
-        if (stackLine.match(/\[INFO\]|Tests run:|^\s*$/) && stackLines.length > 0) {
+        // Stop at next test or info sections
+        if (stackLine.match(/\[INFO\]/) && stackLines.length > 0) {
           break;
         }
-        if (stackLine.match(/\[ERROR\]\s+\w+\([^)]+\).*<<<\s*(FAILURE|ERROR)!/)) {
-          // Next failure, don't increment i
+        // Stop at summary line
+        if (stackLine.match(/Tests run:\s*\d+,\s*Failures:/)) {
+          break;
+        }
+        // Stop at next failure/error line (check all patterns)
+        if (stackLine.match(/\[ERROR\].*<<<\s*(FAILURE|ERROR)!/)) {
+          break;
+        }
+        // Stop at completely empty lines after we've collected some content
+        if (stackLine.trim() === '' && stackLines.length > 3) {
           break;
         }
 
@@ -406,9 +431,121 @@ export function parseMavenTestOutput(output: string): TestResult {
     i++;
   }
 
+  // Fallback: Parse failures/errors from summary section if we didn't find any inline
+  // Maven Surefire outputs sections like:
+  // [ERROR] Failures:
+  // [ERROR]   TestClass.testMethod:42 expected <X> but was <Y>
+  // [ERROR] Errors:
+  // [ERROR]   TestClass.testMethod:42 NullPointerException
+  if (result.failures.length === 0 && result.summary.failed > 0) {
+    parseFailureSummarySection(output, result.failures, 'Failures:');
+  }
+  if (result.errors.length === 0 && result.summary.errors > 0) {
+    parseErrorSummarySection(output, result.errors, 'Errors:');
+  }
+
   result.success = result.summary.failed === 0 && result.summary.errors === 0;
 
   return result;
+}
+
+/**
+ * Parse the failure summary section from Maven output
+ */
+function parseFailureSummarySection(output: string, failures: TestFailure[], sectionHeader: string): void {
+  const lines = output.split('\n');
+  let inSection = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Start of failures section
+    if (line.match(new RegExp(`\\[ERROR\\]\\s*${sectionHeader}`))) {
+      inSection = true;
+      continue;
+    }
+
+    // End of section (next section or empty line after some entries)
+    if (inSection && (line.match(/\[ERROR\]\s*(Errors:|Tests run:|\s*$)/) || line.match(/\[INFO\]/))) {
+      if (line.match(/\[ERROR\]\s*Errors:/)) {
+        inSection = false;
+      }
+      continue;
+    }
+
+    if (inSection) {
+      // Pattern: [ERROR]   TestClass.testMethod:42 message
+      // Or: [ERROR]   com.package.TestClass.testMethod:42 message
+      const match = line.match(/\[ERROR\]\s+(?:[\w.]+\.)?(\w+)\.(\w+)(?::(\d+))?\s*(.*)/);
+      if (match) {
+        const testClass = match[1];
+        const testMethod = match[2];
+        const lineNum = match[3] ? parseInt(match[3], 10) : undefined;
+        const message = match[4] || 'Test failed';
+
+        failures.push({
+          testClass,
+          testMethod,
+          message,
+          stackTrace: '',
+          line: lineNum,
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Parse the error summary section from Maven output
+ */
+function parseErrorSummarySection(output: string, errors: TestError[], sectionHeader: string): void {
+  const lines = output.split('\n');
+  let inSection = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Start of errors section
+    if (line.match(new RegExp(`\\[ERROR\\]\\s*${sectionHeader}`))) {
+      inSection = true;
+      continue;
+    }
+
+    // End of section
+    if (inSection && (line.match(/\[ERROR\]\s*(Tests run:|\s*$)/) || line.match(/\[INFO\]/))) {
+      continue;
+    }
+
+    if (inSection) {
+      // Pattern: [ERROR]   TestClass.testMethod:42 ExceptionType: message
+      // Or: [ERROR]   com.package.TestClass.testMethod:42 message
+      const match = line.match(/\[ERROR\]\s+(?:[\w.]+\.)?(\w+)\.(\w+)(?::(\d+))?\s*(.*)/);
+      if (match) {
+        const testClass = match[1];
+        const testMethod = match[2];
+        const lineNum = match[3] ? parseInt(match[3], 10) : undefined;
+        const rawMessage = match[4] || 'Test error';
+
+        // Try to extract error type from message
+        let errorType = 'Exception';
+        let message = rawMessage;
+        const typeMatch = rawMessage.match(/^([\w.]+(?:Exception|Error))(?::\s*(.*))?$/);
+        if (typeMatch) {
+          errorType = typeMatch[1];
+          message = typeMatch[2] || errorType;
+        }
+
+        errors.push({
+          testClass,
+          testMethod,
+          errorType,
+          message,
+          stackTrace: '',
+          line: lineNum,
+        });
+      }
+    }
+  }
 }
 
 /**
