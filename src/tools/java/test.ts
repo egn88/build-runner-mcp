@@ -33,6 +33,15 @@ export interface RunTestsResult {
     file?: string;
     line?: number;
   }>;
+  errors: Array<{
+    testClass: string;
+    testMethod: string;
+    errorType: string;
+    message: string;
+    stackTrace: string;
+    file?: string;
+    line?: number;
+  }>;
   skipped: Array<{
     testClass: string;
     testMethod: string;
@@ -54,9 +63,11 @@ export async function runTests(params: RunTestsParams): Promise<RunTestsResult> 
     return {
       success: false,
       summary: { total: 0, passed: 0, failed: 0, skipped: 0, errors: 1, duration: '0s' },
-      failures: [{
+      failures: [],
+      errors: [{
         testClass: 'ProjectDetection',
         testMethod: 'detectProject',
+        errorType: 'ConfigurationError',
         message: projectInfo.error || 'Failed to detect project type',
         stackTrace: '',
       }],
@@ -70,9 +81,11 @@ export async function runTests(params: RunTestsParams): Promise<RunTestsResult> 
     return {
       success: false,
       summary: { total: 0, passed: 0, failed: 0, skipped: 0, errors: 1, duration: '0s' },
-      failures: [{
+      failures: [],
+      errors: [{
         testClass: 'BuildSystem',
         testMethod: 'validate',
+        errorType: 'ConfigurationError',
         message: `Unsupported build system: ${buildSystem}. Expected maven or gradle.`,
         stackTrace: '',
       }],

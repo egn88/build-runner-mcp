@@ -29,6 +29,16 @@ export interface TestFailure {
   line?: number;
 }
 
+export interface TestError {
+  testClass: string;
+  testMethod: string;
+  errorType: string;
+  message: string;
+  stackTrace: string;
+  file?: string;
+  line?: number;
+}
+
 export interface SkippedTest {
   testClass: string;
   testMethod: string;
@@ -46,6 +56,7 @@ export interface TestResult {
     duration: string;
   };
   failures: TestFailure[];
+  errors: TestError[];
   skipped: SkippedTest[];
 }
 
@@ -154,6 +165,7 @@ export function parseSurefireReports(projectPath: string, module?: string): Test
       duration: '0s',
     },
     failures: [],
+    errors: [],
     skipped: [],
   };
 
@@ -216,17 +228,25 @@ export function parseSurefireReports(projectPath: string, module?: string): Test
         }
 
         // Check for error
-        const errorMatch = testContent.match(/<error[^>]*message="([^"]*)"[^>]*>([\s\S]*?)<\/error>/);
+        const errorMatch = testContent.match(/<error[^>]*(?:type="([^"]*)")?[^>]*message="([^"]*)"[^>]*>([\s\S]*?)<\/error>/);
         if (errorMatch) {
-          const stackTrace = errorMatch[2].trim();
+          const stackTrace = errorMatch[3].trim();
           const stackLines = stackTrace.split('\n').slice(0, config.maxStackTraceLines);
 
           const locationMatch = stackTrace.match(/at\s+[\w.]+\((\w+\.java):(\d+)\)/);
 
-          result.failures.push({
+          // Extract error type from stack trace if not in attribute
+          let errorType = errorMatch[1] || '';
+          if (!errorType) {
+            const typeMatch = stackTrace.match(/^([\w.]+Exception|[\w.]+Error)/);
+            errorType = typeMatch?.[1] || 'Exception';
+          }
+
+          result.errors.push({
             testClass,
             testMethod,
-            message: errorMatch[1] || 'Test error',
+            errorType,
+            message: errorMatch[2] || 'Test error',
             stackTrace: stackLines.join('\n'),
             file: locationMatch?.[1],
             line: locationMatch ? parseInt(locationMatch[2], 10) : undefined,
@@ -270,6 +290,7 @@ export function parseMavenTestOutput(output: string): TestResult {
       duration: '0s',
     },
     failures: [],
+    errors: [],
     skipped: [],
   };
 
@@ -309,11 +330,12 @@ export function parseMavenTestOutput(output: string): TestResult {
     if (failureMatch) {
       const testMethod = failureMatch[1];
       const testClass = failureMatch[2];
-      const failureType = failureMatch[3];
+      const isError = failureMatch[3] === 'ERROR';
 
       // Collect stack trace lines (they follow the failure line)
       const stackLines: string[] = [];
       let message = '';
+      let errorType = '';
       i++;
 
       // First non-empty line after FAILURE is usually the exception message
@@ -337,6 +359,14 @@ export function parseMavenTestOutput(output: string): TestResult {
         if (cleanLine) {
           if (!message && !cleanLine.startsWith('at ')) {
             message = cleanLine;
+            // Extract error type from message like "java.lang.NullPointerException: message"
+            const typeMatch = cleanLine.match(/^([\w.]+(?:Exception|Error))(?::\s*(.*))?$/);
+            if (typeMatch) {
+              errorType = typeMatch[1];
+              if (typeMatch[2]) {
+                message = typeMatch[2];
+              }
+            }
           }
           stackLines.push(cleanLine);
         }
@@ -349,14 +379,26 @@ export function parseMavenTestOutput(output: string): TestResult {
       // Try to extract file and line from stack trace
       const locationMatch = limitedStack.join('\n').match(/at\s+[\w.$]+\((\w+\.java):(\d+)\)/);
 
-      result.failures.push({
-        testClass,
-        testMethod,
-        message: message || `Test ${failureType.toLowerCase()}`,
-        stackTrace: limitedStack.join('\n'),
-        file: locationMatch?.[1],
-        line: locationMatch ? parseInt(locationMatch[2], 10) : undefined,
-      });
+      if (isError) {
+        result.errors.push({
+          testClass,
+          testMethod,
+          errorType: errorType || 'Exception',
+          message: message || 'Test error',
+          stackTrace: limitedStack.join('\n'),
+          file: locationMatch?.[1],
+          line: locationMatch ? parseInt(locationMatch[2], 10) : undefined,
+        });
+      } else {
+        result.failures.push({
+          testClass,
+          testMethod,
+          message: message || 'Test failure',
+          stackTrace: limitedStack.join('\n'),
+          file: locationMatch?.[1],
+          line: locationMatch ? parseInt(locationMatch[2], 10) : undefined,
+        });
+      }
 
       continue;
     }

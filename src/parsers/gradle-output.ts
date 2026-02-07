@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { config } from '../config.js';
-import { CompileError, CompileResult, TestResult, TestFailure, SkippedTest, BuildArtifact } from './maven-output.js';
+import { CompileError, CompileResult, TestResult, TestFailure, TestError, SkippedTest, BuildArtifact } from './maven-output.js';
 
 /**
  * Parse Gradle compile output for errors and warnings
@@ -101,6 +101,7 @@ export function parseGradleTestReports(projectPath: string, module?: string): Te
       duration: '0s',
     },
     failures: [],
+    errors: [],
     skipped: [],
   };
 
@@ -170,17 +171,25 @@ export function parseGradleTestReports(projectPath: string, module?: string): Te
         }
 
         // Check for error
-        const errorMatch = testContent.match(/<error[^>]*(?:message="([^"]*)")?[^>]*>([\s\S]*?)<\/error>/);
+        const errorMatch = testContent.match(/<error[^>]*(?:type="([^"]*)")?[^>]*(?:message="([^"]*)")?[^>]*>([\s\S]*?)<\/error>/);
         if (errorMatch) {
-          const stackTrace = (errorMatch[2] || '').trim();
+          const stackTrace = (errorMatch[3] || '').trim();
           const stackLines = stackTrace.split('\n').slice(0, config.maxStackTraceLines);
 
           const locationMatch = stackTrace.match(/at\s+[\w.]+\((\w+\.(?:java|kt)):(\d+)\)/);
 
-          result.failures.push({
+          // Extract error type from attribute or stack trace
+          let errorType = errorMatch[1] || '';
+          if (!errorType) {
+            const typeMatch = stackTrace.match(/^([\w.]+Exception|[\w.]+Error)/);
+            errorType = typeMatch?.[1] || 'Exception';
+          }
+
+          result.errors.push({
             testClass,
             testMethod,
-            message: errorMatch[1] || 'Test error',
+            errorType,
+            message: errorMatch[2] || 'Test error',
             stackTrace: stackLines.join('\n'),
             file: locationMatch?.[1],
             line: locationMatch ? parseInt(locationMatch[2], 10) : undefined,
