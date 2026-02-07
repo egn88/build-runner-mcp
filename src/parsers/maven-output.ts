@@ -258,8 +258,9 @@ export function parseSurefireReports(projectPath: string, module?: string): Test
 /**
  * Parse Maven test output from console
  */
-export function parseMavenTestOutput(output: string): Partial<TestResult> {
-  const result: Partial<TestResult> = {
+export function parseMavenTestOutput(output: string): TestResult {
+  const result: TestResult = {
+    success: true,
     summary: {
       total: 0,
       passed: 0,
@@ -269,6 +270,7 @@ export function parseMavenTestOutput(output: string): Partial<TestResult> {
       duration: '0s',
     },
     failures: [],
+    skipped: [],
   };
 
   // Parse summary line: Tests run: 10, Failures: 2, Errors: 0, Skipped: 1
@@ -278,22 +280,91 @@ export function parseMavenTestOutput(output: string): Partial<TestResult> {
     for (const match of summaryMatch) {
       const numbers = match.match(/\d+/g);
       if (numbers && numbers.length >= 4) {
-        result.summary!.total += parseInt(numbers[0], 10);
-        result.summary!.failed += parseInt(numbers[1], 10);
-        result.summary!.errors += parseInt(numbers[2], 10);
-        result.summary!.skipped += parseInt(numbers[3], 10);
+        result.summary.total += parseInt(numbers[0], 10);
+        result.summary.failed += parseInt(numbers[1], 10);
+        result.summary.errors += parseInt(numbers[2], 10);
+        result.summary.skipped += parseInt(numbers[3], 10);
       }
     }
-    result.summary!.passed = result.summary!.total - result.summary!.failed - result.summary!.errors - result.summary!.skipped;
+    result.summary.passed = result.summary.total - result.summary.failed - result.summary.errors - result.summary.skipped;
   }
 
-  // Parse time
-  const timeMatch = output.match(/Time elapsed:\s*([\d.]+)\s*s/);
-  if (timeMatch) {
-    result.summary!.duration = `${timeMatch[1]}s`;
+  // Parse total time from summary
+  const totalTimeMatch = output.match(/\[INFO\] Total time:\s*([\d.:]+\s*\w*)/);
+  if (totalTimeMatch) {
+    result.summary.duration = totalTimeMatch[1].trim();
   }
 
-  result.success = result.summary!.failed === 0 && result.summary!.errors === 0;
+  // Parse individual test failures
+  // Format: [ERROR] testMethod(com.package.TestClass)  Time elapsed: 0.005 s  <<< FAILURE!
+  // Followed by stack trace lines
+  const lines = output.split('\n');
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Match failure/error pattern: testMethod(com.package.TestClass)  <<< FAILURE! or <<< ERROR!
+    const failureMatch = line.match(/\[ERROR\]\s+(\w+)\(([^)]+)\)\s+.*<<<\s*(FAILURE|ERROR)!/);
+    if (failureMatch) {
+      const testMethod = failureMatch[1];
+      const testClass = failureMatch[2];
+      const failureType = failureMatch[3];
+
+      // Collect stack trace lines (they follow the failure line)
+      const stackLines: string[] = [];
+      let message = '';
+      i++;
+
+      // First non-empty line after FAILURE is usually the exception message
+      while (i < lines.length && lines[i].trim() === '') {
+        i++;
+      }
+
+      // Capture exception message and stack trace
+      while (i < lines.length) {
+        const stackLine = lines[i];
+        // Stop at next test or empty sections
+        if (stackLine.match(/\[INFO\]|Tests run:|^\s*$/) && stackLines.length > 0) {
+          break;
+        }
+        if (stackLine.match(/\[ERROR\]\s+\w+\([^)]+\).*<<<\s*(FAILURE|ERROR)!/)) {
+          // Next failure, don't increment i
+          break;
+        }
+
+        const cleanLine = stackLine.replace(/^\[ERROR\]\s*/, '').trim();
+        if (cleanLine) {
+          if (!message && !cleanLine.startsWith('at ')) {
+            message = cleanLine;
+          }
+          stackLines.push(cleanLine);
+        }
+        i++;
+      }
+
+      // Limit stack trace lines
+      const limitedStack = stackLines.slice(0, config.maxStackTraceLines);
+
+      // Try to extract file and line from stack trace
+      const locationMatch = limitedStack.join('\n').match(/at\s+[\w.$]+\((\w+\.java):(\d+)\)/);
+
+      result.failures.push({
+        testClass,
+        testMethod,
+        message: message || `Test ${failureType.toLowerCase()}`,
+        stackTrace: limitedStack.join('\n'),
+        file: locationMatch?.[1],
+        line: locationMatch ? parseInt(locationMatch[2], 10) : undefined,
+      });
+
+      continue;
+    }
+
+    i++;
+  }
+
+  result.success = result.summary.failed === 0 && result.summary.errors === 0;
 
   return result;
 }

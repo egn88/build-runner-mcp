@@ -1,7 +1,6 @@
 import { executeCommand, formatDuration, CommandOptions } from '../../utils/command.js';
 import {
   parseMavenCompileOutput,
-  parseSurefireReports,
   parseMavenTestOutput,
   parseMavenBuildOutput,
   CompileResult,
@@ -153,17 +152,30 @@ export async function mavenTest(options: MavenOptions): Promise<TestResult> {
   };
 
   const result = await executeCommand(command, cmdOptions);
+  const consoleOutput = result.stdout + '\n' + result.stderr;
 
-  // Try to parse Surefire XML reports first (more detailed)
-  const testResult = parseSurefireReports(options.projectPath, options.module);
+  // Parse console output directly - this only includes tests from the current run
+  const testResult = parseMavenTestOutput(consoleOutput);
 
-  // If no results from XML, fall back to console output parsing
-  if (testResult.summary.total === 0) {
-    const consoleResult = parseMavenTestOutput(result.stdout + '\n' + result.stderr);
-    if (consoleResult.summary) {
-      testResult.summary = consoleResult.summary;
+  // If console parsing found no results, command may have failed before tests ran
+  if (testResult.summary.total === 0 && !result.success) {
+    testResult.success = false;
+    // Extract error message from output
+    const errorLines = consoleOutput
+      .split('\n')
+      .filter(line => line.includes('[ERROR]'))
+      .map(line => line.replace('[ERROR]', '').trim())
+      .filter(line => line.length > 0)
+      .slice(0, 5);
+
+    if (errorLines.length > 0) {
+      testResult.failures.push({
+        testClass: 'Build',
+        testMethod: 'compile',
+        message: 'Tests could not run due to build error',
+        stackTrace: errorLines.join('\n'),
+      });
     }
-    testResult.success = consoleResult.success ?? result.success;
   }
 
   return testResult;
@@ -182,14 +194,29 @@ export async function mavenVerify(options: MavenOptions): Promise<TestResult> {
   };
 
   const result = await executeCommand(command, cmdOptions);
-  const testResult = parseSurefireReports(options.projectPath, options.module);
+  const consoleOutput = result.stdout + '\n' + result.stderr;
 
-  if (testResult.summary.total === 0) {
-    const consoleResult = parseMavenTestOutput(result.stdout + '\n' + result.stderr);
-    if (consoleResult.summary) {
-      testResult.summary = consoleResult.summary;
+  // Parse console output directly - this only includes tests from the current run
+  const testResult = parseMavenTestOutput(consoleOutput);
+
+  // If console parsing found no results, command may have failed before tests ran
+  if (testResult.summary.total === 0 && !result.success) {
+    testResult.success = false;
+    const errorLines = consoleOutput
+      .split('\n')
+      .filter(line => line.includes('[ERROR]'))
+      .map(line => line.replace('[ERROR]', '').trim())
+      .filter(line => line.length > 0)
+      .slice(0, 5);
+
+    if (errorLines.length > 0) {
+      testResult.failures.push({
+        testClass: 'Build',
+        testMethod: 'verify',
+        message: 'Verification failed due to build error',
+        stackTrace: errorLines.join('\n'),
+      });
     }
-    testResult.success = consoleResult.success ?? result.success;
   }
 
   return testResult;
