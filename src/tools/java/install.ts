@@ -9,7 +9,8 @@ export const installProjectSchema = z.object({
   javaVersion: z.string().optional().describe('Java version to use (e.g., "17.0.16-amzn", "21.0.8-tem")'),
   skipTests: z.boolean().optional().describe('Skip running tests during install (default: true)'),
   clean: z.boolean().optional().describe('Run clean before install (default: false)'),
-  module: z.string().optional().describe('Specific module to install (for multi-module projects, uses -pl flag)'),
+  module: z.string().optional().describe('Module(s) to include/exclude (e.g., "core,api" or "!slow-tests" or "core,!tests")'),
+  alsoMake: z.boolean().optional().describe('Build required dependencies with -am flag (default: true)'),
 });
 
 export type InstallProjectParams = z.infer<typeof installProjectSchema>;
@@ -29,7 +30,7 @@ export interface InstallProjectResult {
  * Install a Java project to local repository using Maven or Gradle
  */
 export async function installProject(params: InstallProjectParams): Promise<InstallProjectResult> {
-  const { projectPath, javaVersion, skipTests = true, clean = false, module } = params;
+  const { projectPath, javaVersion, skipTests = true, clean = false, module, alsoMake } = params;
 
   // Detect project type
   const projectInfo = await detectProject({ projectPath });
@@ -63,6 +64,7 @@ export async function installProject(params: InstallProjectParams): Promise<Inst
       skipTests,
       clean,
       module,
+      alsoMake,
     });
   } else {
     result = await gradleInstall({
@@ -71,6 +73,7 @@ export async function installProject(params: InstallProjectParams): Promise<Inst
       skipTests,
       clean,
       module,
+      alsoMake,
     });
   }
 
@@ -82,7 +85,7 @@ export async function installProject(params: InstallProjectParams): Promise<Inst
 
 export const installProjectTool = {
   name: 'install_project',
-  description: 'Install a Java project to the local Maven repository using Maven (mvn install) or Gradle (publishToMavenLocal). Supports multi-module projects with -pl flag.',
+  description: 'Install a Java project to the local Maven repository using Maven (mvn install) or Gradle (publishToMavenLocal). Supports multi-module projects with -pl flag for inclusion/exclusion.',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -104,7 +107,11 @@ export const installProjectTool = {
       },
       module: {
         type: 'string',
-        description: 'Specific module to install (for multi-module projects, uses -pl flag)',
+        description: 'Module(s) to include/exclude (e.g., "core,api" or "!slow-tests" or "core,!tests")',
+      },
+      alsoMake: {
+        type: 'boolean',
+        description: 'Build required dependencies with -am flag (default: true, Maven only)',
       },
     },
     required: ['projectPath'],

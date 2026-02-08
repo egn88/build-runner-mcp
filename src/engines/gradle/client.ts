@@ -14,6 +14,7 @@ export interface GradleOptions {
   clean?: boolean;
   skipTests?: boolean;
   module?: string;
+  alsoMake?: boolean; // Note: Gradle builds dependencies automatically, this is for API consistency
   testPattern?: string;
   failFast?: boolean;
   additionalArgs?: string[];

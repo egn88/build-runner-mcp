@@ -8,7 +8,8 @@ export const runTestsSchema = z.object({
   projectPath: z.string().describe('Path to the project root directory'),
   javaVersion: z.string().optional().describe('Java version to use (e.g., "17.0.16-amzn", "21.0.8-tem")'),
   testPattern: z.string().optional().describe('Specific test class or method pattern (e.g., "UserServiceTest", "UserServiceTest#testLogin")'),
-  module: z.string().optional().describe('Specific module to test (for multi-module projects)'),
+  module: z.string().optional().describe('Module(s) to include/exclude (e.g., "core,api" or "!slow-tests" or "core,!tests")'),
+  alsoMake: z.boolean().optional().describe('Build required dependencies with -am flag (default: true)'),
   failFast: z.boolean().optional().describe('Stop on first failure'),
   clean: z.boolean().optional().describe('Run clean before tests'),
 });
@@ -54,7 +55,7 @@ export interface RunTestsResult {
  * Run tests for a Java project using Maven or Gradle
  */
 export async function runTests(params: RunTestsParams): Promise<RunTestsResult> {
-  const { projectPath, javaVersion, testPattern, module, failFast = false, clean = false } = params;
+  const { projectPath, javaVersion, testPattern, module, alsoMake, failFast = false, clean = false } = params;
 
   // Detect project type
   const projectInfo = await detectProject({ projectPath });
@@ -101,6 +102,7 @@ export async function runTests(params: RunTestsParams): Promise<RunTestsResult> 
       javaVersion,
       testPattern,
       module,
+      alsoMake,
       failFast,
       clean,
     });
@@ -110,6 +112,7 @@ export async function runTests(params: RunTestsParams): Promise<RunTestsResult> 
       javaVersion,
       testPattern,
       module,
+      alsoMake,
       failFast,
       clean,
     });
@@ -141,7 +144,11 @@ export const runTestsTool = {
       },
       module: {
         type: 'string',
-        description: 'Specific module to test (for multi-module projects)',
+        description: 'Module(s) to include/exclude (e.g., "core,api" or "!slow-tests" or "core,!tests")',
+      },
+      alsoMake: {
+        type: 'boolean',
+        description: 'Build required dependencies with -am flag (default: true, Maven only)',
       },
       failFast: {
         type: 'boolean',

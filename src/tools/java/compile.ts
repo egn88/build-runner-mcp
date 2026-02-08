@@ -8,7 +8,8 @@ export const compileProjectSchema = z.object({
   projectPath: z.string().describe('Path to the project root directory'),
   javaVersion: z.string().optional().describe('Java version to use (e.g., "17.0.16-amzn", "21.0.8-tem")'),
   clean: z.boolean().optional().describe('Run clean before compile'),
-  module: z.string().optional().describe('Specific module to compile (for multi-module projects)'),
+  module: z.string().optional().describe('Module(s) to include/exclude (e.g., "core,api" or "!slow-tests" or "core,!tests")'),
+  alsoMake: z.boolean().optional().describe('Build required dependencies with -am flag (default: true)'),
 });
 
 export type CompileProjectParams = z.infer<typeof compileProjectSchema>;
@@ -40,7 +41,7 @@ export interface CompileProjectResult {
  * Compile a Java project using Maven or Gradle
  */
 export async function compileProject(params: CompileProjectParams): Promise<CompileProjectResult> {
-  const { projectPath, javaVersion, clean = false, module } = params;
+  const { projectPath, javaVersion, clean = false, module, alsoMake } = params;
 
   // Detect project type
   const projectInfo = await detectProject({ projectPath });
@@ -83,6 +84,7 @@ export async function compileProject(params: CompileProjectParams): Promise<Comp
       javaVersion,
       clean,
       module,
+      alsoMake,
     });
   } else {
     result = await gradleCompile({
@@ -90,6 +92,7 @@ export async function compileProject(params: CompileProjectParams): Promise<Comp
       javaVersion,
       clean,
       module,
+      alsoMake,
     });
   }
 
@@ -119,7 +122,11 @@ export const compileProjectTool = {
       },
       module: {
         type: 'string',
-        description: 'Specific module to compile (for multi-module projects)',
+        description: 'Module(s) to include/exclude (e.g., "core,api" or "!slow-tests" or "core,!tests")',
+      },
+      alsoMake: {
+        type: 'boolean',
+        description: 'Build required dependencies with -am flag (default: true, Maven only)',
       },
     },
     required: ['projectPath'],

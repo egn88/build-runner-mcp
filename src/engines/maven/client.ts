@@ -14,6 +14,7 @@ export interface MavenOptions {
   clean?: boolean;
   skipTests?: boolean;
   module?: string;
+  alsoMake?: boolean;
   testPattern?: string;
   failFast?: boolean;
   profiles?: string[];
@@ -33,7 +34,11 @@ function buildMavenCommand(goal: string, options: MavenOptions): string {
 
   // Add module if specified
   if (options.module) {
-    parts.push('-pl', options.module, '-am');
+    parts.push('-pl', options.module);
+    // Add -am (also-make) to build dependencies, default true unless explicitly disabled
+    if (options.alsoMake !== false) {
+      parts.push('-am');
+    }
   }
 
   // Add clean if requested

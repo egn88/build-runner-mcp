@@ -107,6 +107,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           javaVersion?: string;
           clean?: boolean;
           module?: string;
+          alsoMake?: boolean;
         });
         break;
 
@@ -117,6 +118,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           skipTests?: boolean;
           clean?: boolean;
           module?: string;
+          alsoMake?: boolean;
         });
         break;
 
@@ -127,6 +129,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           skipTests?: boolean;
           clean?: boolean;
           module?: string;
+          alsoMake?: boolean;
         });
         break;
 
@@ -136,6 +139,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           javaVersion?: string;
           testPattern?: string;
           module?: string;
+          alsoMake?: boolean;
           failFast?: boolean;
           clean?: boolean;
         });
