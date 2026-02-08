@@ -17,5 +17,5 @@ export const config: Config = {
     '25.0.1-tem',
   ],
   defaultTimeout: 300000, // 5 minutes
-  maxStackTraceLines: 10,
+  maxStackTraceLines: 25,
 };

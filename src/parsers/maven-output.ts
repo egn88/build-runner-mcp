@@ -344,6 +344,28 @@ export function parseMavenTestOutput(output: string): TestResult {
       }
     }
 
+    // Pattern 4: Class-level summary without [ERROR] prefix
+    // Example: tech.elomar.whodrug.core.query.C3QueryIntegrationTest -- Time elapsed: 0.188 s <<< ERROR!
+    if (!failureMatch) {
+      const classLevelMatch = line.match(/^([\w.]+)\s+--\s+Time elapsed:.*<<<\s*(FAILURE|ERROR)!/);
+      if (classLevelMatch) {
+        const fullClassName = classLevelMatch[1];
+        const shortClassName = fullClassName.split('.').pop() || fullClassName;
+        failureMatch = [line, 'initializationError', shortClassName, classLevelMatch[2]];
+      }
+    }
+
+    // Pattern 5: Summary line with "-- in ClassName" format
+    // Example: Tests run: 1, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 0.188 s <<< FAILURE! -- in tech.elomar.whodrug.core.query.C3QueryIntegrationTest
+    if (!failureMatch) {
+      const summaryWithClassMatch = line.match(/Tests run:.*<<<\s*(FAILURE|ERROR)!\s+--\s+in\s+([\w.]+)/);
+      if (summaryWithClassMatch) {
+        const fullClassName = summaryWithClassMatch[2];
+        const shortClassName = fullClassName.split('.').pop() || fullClassName;
+        failureMatch = [line, 'testExecution', shortClassName, summaryWithClassMatch[1]];
+      }
+    }
+
     if (failureMatch) {
       const testMethod = failureMatch[1];
       const testClass = failureMatch[2];
@@ -360,24 +382,44 @@ export function parseMavenTestOutput(output: string): TestResult {
         i++;
       }
 
+      // Track consecutive empty lines to know when to stop
+      let consecutiveEmptyLines = 0;
+
       // Capture exception message and stack trace
       while (i < lines.length) {
         const stackLine = lines[i];
-        // Stop at next test or info sections
+
+        // Stop at next test or info sections (but only after we have some content)
         if (stackLine.match(/\[INFO\]/) && stackLines.length > 0) {
           break;
         }
-        // Stop at summary line
-        if (stackLine.match(/Tests run:\s*\d+,\s*Failures:/)) {
+
+        // Stop at summary line for different test class
+        if (stackLine.match(/Tests run:\s*\d+,\s*Failures:/) && stackLines.length > 0) {
           break;
         }
-        // Stop at next failure/error line (check all patterns)
-        if (stackLine.match(/\[ERROR\].*<<<\s*(FAILURE|ERROR)!/)) {
+
+        // Stop at next failure/error line (check all patterns including class-level)
+        if (stackLine.match(/<<<\s*(FAILURE|ERROR)!/) && stackLines.length > 0) {
           break;
         }
-        // Stop at completely empty lines after we've collected some content
-        if (stackLine.trim() === '' && stackLines.length > 3) {
+
+        // Stop at class-level summary line for different class
+        if (stackLine.match(/^[\w.]+\s+--\s+Time elapsed:/) && stackLines.length > 0) {
           break;
+        }
+
+        // Track empty lines
+        if (stackLine.trim() === '') {
+          consecutiveEmptyLines++;
+          // Stop after 2 consecutive empty lines if we have some content
+          if (consecutiveEmptyLines >= 2 && stackLines.length > 3) {
+            break;
+          }
+          i++;
+          continue;
+        } else {
+          consecutiveEmptyLines = 0;
         }
 
         const cleanLine = stackLine.replace(/^\[ERROR\]\s*/, '').trim();
@@ -443,6 +485,9 @@ export function parseMavenTestOutput(output: string): TestResult {
   if (result.errors.length === 0 && result.summary.errors > 0) {
     parseErrorSummarySection(output, result.errors, 'Errors:');
   }
+
+  // Enrich existing errors/failures that have empty stack traces with more context
+  enrichWithExceptionDetails(output, result);
 
   result.success = result.summary.failed === 0 && result.summary.errors === 0;
 
@@ -595,4 +640,123 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Enrich test errors/failures that have empty or minimal details with exception info from output
+ */
+function enrichWithExceptionDetails(output: string, result: TestResult): void {
+  const lines = output.split('\n');
+
+  // Look for exception blocks in the output
+  // Common patterns:
+  // - "Caused by: java.lang.Exception: message"
+  // - "java.lang.IllegalStateException: Failed to load ApplicationContext"
+  // - Exception class name followed by stack trace
+
+  for (const error of result.errors) {
+    if (!error.stackTrace || error.stackTrace.length < 50) {
+      const exceptionDetails = findExceptionDetails(lines, error.testClass);
+      if (exceptionDetails) {
+        if (!error.stackTrace) {
+          error.stackTrace = exceptionDetails.stackTrace;
+        } else {
+          error.stackTrace += '\n' + exceptionDetails.stackTrace;
+        }
+        if (exceptionDetails.message && (!error.message || error.message === 'Test error')) {
+          error.message = exceptionDetails.message;
+        }
+        if (exceptionDetails.errorType && error.errorType === 'Exception') {
+          error.errorType = exceptionDetails.errorType;
+        }
+      }
+    }
+  }
+
+  for (const failure of result.failures) {
+    if (!failure.stackTrace || failure.stackTrace.length < 50) {
+      const exceptionDetails = findExceptionDetails(lines, failure.testClass);
+      if (exceptionDetails) {
+        if (!failure.stackTrace) {
+          failure.stackTrace = exceptionDetails.stackTrace;
+        } else {
+          failure.stackTrace += '\n' + exceptionDetails.stackTrace;
+        }
+        if (exceptionDetails.message && (!failure.message || failure.message === 'Test failure')) {
+          failure.message = exceptionDetails.message;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Find exception details related to a test class from the output lines
+ */
+function findExceptionDetails(lines: string[], testClass: string): { stackTrace: string; message?: string; errorType?: string } | null {
+  const stackTraceLines: string[] = [];
+  let message = '';
+  let errorType = '';
+  let inExceptionBlock = false;
+  let foundRelevantClass = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Look for the start of an exception related to this test class
+    if (line.includes(testClass) && (line.includes('Exception') || line.includes('Error') || line.includes('<<<'))) {
+      foundRelevantClass = true;
+    }
+
+    // Look for exception start patterns
+    const exceptionStart = line.match(/^([\w.]+(?:Exception|Error)):\s*(.*)$/);
+    const causedBy = line.match(/Caused by:\s*([\w.]+(?:Exception|Error)):\s*(.*)/);
+
+    if (exceptionStart || causedBy) {
+      const match = causedBy || exceptionStart;
+      if (match) {
+        if (inExceptionBlock && stackTraceLines.length > 0) {
+          // We already have an exception, check if this one is more relevant
+          if (!foundRelevantClass) {
+            continue;
+          }
+        }
+        inExceptionBlock = true;
+        errorType = match[1];
+        message = match[2] || errorType;
+        stackTraceLines.push(line.trim());
+        continue;
+      }
+    }
+
+    // Collect stack trace lines
+    if (inExceptionBlock) {
+      if (line.trim().startsWith('at ')) {
+        stackTraceLines.push(line.trim());
+        if (stackTraceLines.length >= config.maxStackTraceLines) {
+          break;
+        }
+      } else if (line.match(/Caused by:/)) {
+        stackTraceLines.push(line.trim());
+      } else if (line.trim() === '' && stackTraceLines.length > 3) {
+        // Stop at empty line after collecting some content
+        if (foundRelevantClass) {
+          break;
+        }
+      } else if (line.match(/Tests run:/) || line.match(/\[INFO\]/)) {
+        // Stop at test summary or info sections
+        break;
+      }
+    }
+  }
+
+  if (stackTraceLines.length > 0) {
+    return {
+      stackTrace: stackTraceLines.join('\n'),
+      message: message || undefined,
+      errorType: errorType || undefined,
+    };
+  }
+
+  return null;
 }
