@@ -182,6 +182,45 @@ export async function mavenTest(options: MavenOptions): Promise<TestResult> {
 }
 
 /**
+ * Run Maven install (package and install to local repository)
+ */
+export async function mavenInstall(options: MavenOptions): Promise<BuildResult> {
+  const command = buildMavenCommand('install', { ...options, skipTests: options.skipTests ?? true });
+
+  const cmdOptions: CommandOptions = {
+    cwd: options.projectPath,
+    javaVersion: options.javaVersion,
+    timeout: 600000, // 10 minutes for install
+  };
+
+  const startTime = Date.now();
+  const result = await executeCommand(command, cmdOptions);
+  const duration = formatDuration(Date.now() - startTime);
+
+  const artifacts = parseMavenBuildOutput(result.stdout + '\n' + result.stderr, options.projectPath);
+
+  const buildResult: BuildResult = {
+    success: result.success,
+    artifacts,
+    duration,
+  };
+
+  if (!result.success) {
+    // Extract error messages
+    const errorLines = (result.stdout + '\n' + result.stderr)
+      .split('\n')
+      .filter(line => line.includes('[ERROR]'))
+      .map(line => line.replace('[ERROR]', '').trim())
+      .filter(line => line.length > 0)
+      .slice(0, 10); // Limit to 10 error lines
+
+    buildResult.errors = errorLines;
+  }
+
+  return buildResult;
+}
+
+/**
  * Run Maven verify (includes integration tests)
  */
 export async function mavenVerify(options: MavenOptions): Promise<TestResult> {

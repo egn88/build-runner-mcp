@@ -27,6 +27,10 @@ import {
   buildProjectTool,
 } from './tools/java/build.js';
 import {
+  installProject,
+  installProjectTool,
+} from './tools/java/install.js';
+import {
   runTests,
   runTestsTool,
 } from './tools/java/test.js';
@@ -64,6 +68,7 @@ const allTools = [
   // Java tools
   compileProjectTool,
   buildProjectTool,
+  installProjectTool,
   runTestsTool,
   // Node tools
   nodeBuildProjectTool,
@@ -107,6 +112,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'build_project':
         result = await buildProject(args as {
+          projectPath: string;
+          javaVersion?: string;
+          skipTests?: boolean;
+          clean?: boolean;
+          module?: string;
+        });
+        break;
+
+      case 'install_project':
+        result = await installProject(args as {
           projectPath: string;
           javaVersion?: string;
           skipTests?: boolean;

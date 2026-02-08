@@ -164,6 +164,42 @@ export async function gradleTest(options: GradleOptions): Promise<TestResult> {
 }
 
 /**
+ * Run Gradle install (publishToMavenLocal)
+ */
+export async function gradleInstall(options: GradleOptions): Promise<BuildResult> {
+  const command = buildGradleCommand('publishToMavenLocal', { ...options, skipTests: options.skipTests ?? true });
+
+  const cmdOptions: CommandOptions = {
+    cwd: options.projectPath,
+    javaVersion: options.javaVersion,
+    timeout: 600000, // 10 minutes for install
+  };
+
+  const startTime = Date.now();
+  const result = await executeCommand(command, cmdOptions);
+  const duration = formatDuration(Date.now() - startTime);
+
+  const artifacts = parseGradleBuildOutput(result.stdout + '\n' + result.stderr, options.projectPath);
+
+  const buildResult: BuildResult = {
+    success: result.success,
+    artifacts,
+    duration,
+  };
+
+  if (!result.success) {
+    const errorLines = (result.stdout + '\n' + result.stderr)
+      .split('\n')
+      .filter(line => line.includes('FAILED') || line.includes('error:') || line.startsWith('e:'))
+      .slice(0, 10);
+
+    buildResult.errors = errorLines;
+  }
+
+  return buildResult;
+}
+
+/**
  * Run Gradle assemble (build without tests)
  */
 export async function gradleAssemble(options: GradleOptions): Promise<BuildResult> {
