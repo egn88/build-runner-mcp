@@ -1,0 +1,29 @@
+package com.example;
+
+/**
+ * This file contains intentional compilation errors.
+ * Rename to CompileError.java to test compilation error parsing.
+ */
+public class CompileError {
+
+    // Error 1: Missing semicolon
+    private String name = "test"
+
+    // Error 2: Undefined variable
+    public void method1() {
+        System.out.println(undefinedVariable);
+    }
+
+    // Error 3: Type mismatch
+    public int method2() {
+        return "not an int";
+    }
+
+    // Error 4: Missing method body
+    public void method3()
+
+    // Error 5: Incompatible types in assignment
+    public void method4() {
+        int number = "string";
+    }
+}
