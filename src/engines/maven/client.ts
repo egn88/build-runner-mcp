@@ -90,13 +90,26 @@ export async function mavenCompile(options: MavenOptions): Promise<CompileResult
   const result = await executeCommand(command, cmdOptions);
   const parseResult = parseMavenCompileOutput(result.stdout + '\n' + result.stderr);
 
-  // If no specific errors were parsed but command failed, add a general error
+  // If no specific errors were parsed but command failed, extract error lines from output
   if (!result.success && parseResult.errors.length === 0) {
     parseResult.success = false;
+
+    // Extract all [ERROR] lines from the output
+    const errorLines = (result.stdout + '\n' + result.stderr)
+      .split('\n')
+      .filter(line => line.includes('[ERROR]'))
+      .map(line => line.replace(/^\[ERROR\]\s*/, '').trim())
+      .filter(line => line.length > 0)
+      .slice(0, 15); // Limit to 15 error lines for context
+
+    const errorMessage = errorLines.length > 0
+      ? errorLines.join('\n')
+      : 'Compilation failed. Check build output.';
+
     parseResult.errors.push({
       file: 'unknown',
       line: 0,
-      message: 'Compilation failed. Check build output.',
+      message: errorMessage,
       severity: 'error',
     });
     parseResult.summary.errorCount = parseResult.errors.length;
